@@ -120,12 +120,15 @@ function compute_eigsolve_pullback_data(Δvals, Δvecs, vals, vecs, info, which,
             continue
         end
 
-        # General case :
-
-        # for the case where `f` is a real matrix, we can expect the following simplication
-        # TODO: can we implement this within our general approach, or generalise this to also
-        # cover the case where `f` is a function?
-        # if i > 1 && eltype(A) <: Real &&
+        # TODO: Is the following useful and correct?
+        # (given that Δvecs might contain weird tangent types)
+        # The following only holds if `f` represents a real linear operator, which we cannot
+        # check explicitly, unless `f isa AbstractMatrix`.`
+        # However, exact equality between conjugate pairs of eigenvalues and eigenvectors
+        # seems sufficient to guarantee this
+        # Also, we can only be sure to know how to apply complex conjugation when the
+        # vectors are of type `AbstractArray{T}` with `T` the scalar type
+        # if i > 1 && ws[i - 1] isa AbstractArray{T} &&
         #    vals[i] == conj(vals[i - 1]) && Δvals[i] == conj(Δvals[i - 1]) &&
         #    vecs[i] == conj(vecs[i - 1]) && Δvecs[i] == conj(Δvecs[i - 1])
         #     ws[i] = conj(ws[i - 1])
@@ -244,11 +247,15 @@ function compute_eigsolve_pullback_data(Δvals, Δvecs, vals, vecs, info, which,
     # [(A * (1-P) + shift * P)  -ΔV; 0 Λ], where eᵢ is the ith unit vector. We will need
     # to renormalise the eigenvectors to have exactly eᵢ as second component. We use 
     # (0, e₁ + e₂ + ... + eₙ) as the initial guess for the eigenvalue problem.
+
     W₀ = (zerovector(vecs[1]), one.(vals))
     P = orthogonalprojector(vecs, n, Gc)
+    # TODO: is `realeigsolve` every used here, as there is a separate `alg_primal::Lanczos` method below
     solver = (T <: Real) ? KrylovKit.realeigsolve : KrylovKit.eigsolve # for `eigsolve`, `T` will always be a Complex subtype`
-    rvals, Ws, reverse_info = let P = P, ΔV = sylvesterarg, shift = shift
-        solver(W₀, n, reverse_which(which), alg_rrule) do (w, x)
+    rvals, Ws, reverse_info = let P = P, ΔV = sylvesterarg, shift = shift,
+        eigsort = EigSorter(v -> minimum(DistanceTo(conj(v)), vals))
+
+        solver(W₀, n, eigsort, alg_rrule) do (w, x)
             w₀ = P(w)
             w′ = KrylovKit.apply(fᴴ, add(w, w₀, -1))
             if !iszero(shift)
@@ -269,19 +276,24 @@ function compute_eigsolve_pullback_data(Δvals, Δvecs, vals, vecs, info, which,
     tol = alg_rrule.tol
     Q = orthogonalcomplementprojector(vecs, n, Gc)
     for i in 1:n
-        w, x = Ws[i]
-        _, ic = findmax(abs, x)
-        factor = 1 / x[ic]
-        x[ic] = zero(x[ic])
+        d, ic = findmin(DistanceTo(conj(vals[i])), rvals)
+        w, x = Ws[ic]
+        factor = 1 / x[i]
+        x[i] = zero(x[i])
         if alg_rrule.verbosity >= 0
-            error = max(norm(x, Inf), abs(rvals[i] - conj(vals[ic])))
-            error > 5 * tol &&
-                @warn "`eigsolve` cotangent linear problem ($ic) returns unexpected result: error = $error"
+            error = max(norm(x, Inf), abs(rvals[ic] - conj(vals[i])))
+            error > 10 * tol &&
+                @warn "`eigsolve` cotangent linear problem ($i) returns unexpected result: error = $error"
         end
-        ws[ic] = VectorInterface.add!!(zs[ic], Q(w), -factor)
+        ws[i] = VectorInterface.add!!(zs[i], Q(w), -factor)
     end
     return ws
 end
+
+struct DistanceTo{T}
+    x::T
+end
+(d::DistanceTo)(y) = norm(y - d.x)
 
 # several simplications happen in the case of a Hermitian eigenvalue problem
 function compute_eigsolve_pullback_data(Δvals, Δvecs, vals, vecs, info, which, fᴴ,
@@ -343,8 +355,10 @@ function compute_eigsolve_pullback_data(Δvals, Δvecs, vals, vecs, info, which,
     W₀ = (zerovector(vecs[1]), one.(vals))
     P = orthogonalprojector(vecs, n)
     solver = (T <: Real) ? KrylovKit.realeigsolve : KrylovKit.eigsolve
-    rvals, Ws, reverse_info = let P = P, ΔV = sylvesterarg, shift = shift
-        solver(W₀, n, reverse_which(which), alg_rrule) do (w, x)
+    rvals, Ws, reverse_info = let P = P, ΔV = sylvesterarg, shift = shift,
+        eigsort = EigSorter(v -> minimum(DistanceTo(conj(v)), vals))
+
+        solver(W₀, n, eigsort, alg_rrule) do (w, x)
             w₀ = P(w)
             w′ = KrylovKit.apply(fᴴ, add(w, w₀, -1))
             if !iszero(shift)

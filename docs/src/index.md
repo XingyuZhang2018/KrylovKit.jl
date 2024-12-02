@@ -20,6 +20,11 @@ The high level interface of KrylovKit is provided by the following functions:
 *   [`expintegrator`](@ref): exponential integrator for a linear non-homogeneous ODE
     (generalization of `exponentiate`)
 
+Furthermore, for specialised use cases, there are functions that can deal with so-called
+"real linear maps", which arise e.g. in the context of differentiable programming:
+*   [`reallinsolve`](@ref) and [`realeigsolve`](@ref)
+
+
 ## Package features and alternatives
 This section could also be titled "Why did I create KrylovKit.jl"?
 
@@ -29,8 +34,10 @@ There are already a fair number of packages with Krylov-based or other iterative
     square problems, eigenvalue and singular value problems
 *   [Krylov.jl](https://github.com/JuliaSmoothOptimizers/Krylov.jl): part of the
     [JuliaSmoothOptimizers](https://github.com/JuliaSmoothOptimizers) organisation, solves
-    linear systems and least square problems, specific for linear operators from
-    [LinearOperators.jl](https://github.com/JuliaSmoothOptimizers/LinearOperators.jl).
+    linear systems and least square problems on CPU or GPU for any data type that supports `mul!()`,
+    including dense and sparse matrices, and abstract operators such as those defined from
+    [LinearOperators.jl](https://github.com/JuliaSmoothOptimizers/LinearOperators.jl) or
+    [LinearMaps.jl](https://github.com/JuliaLinearAlgebra/LinearMaps.jl).
 *   [KrylovMethods.jl](https://github.com/lruthotto/KrylovMethods.jl): specific for sparse
     matrices
 *   [Expokit.jl](https://github.com/acroy/Expokit.jl): application of the matrix
@@ -47,7 +54,7 @@ There are already a fair number of packages with Krylov-based or other iterative
     contains implementations of [high order exponential integrators](https://docs.juliadiffeq.org/latest/solvers/split_ode_solve/#OrdinaryDiffEq.jl-2)
     with adaptive Krylov-subspace calculations for solving semilinear and nonlinear ODEs.
 
-These packages have certainly inspired and influenced the development of KrylovKit.jl.
+Some of these packages have certainly inspired and influenced the development of KrylovKit.jl.
 However, KrylovKit.jl distinguishes itself from the previous packages in the following ways:
 
 1.  KrylovKit accepts general functions to represent the linear map or operator that defines
@@ -61,21 +68,13 @@ However, KrylovKit.jl distinguishes itself from the previous packages in the fol
 2.  KrylovKit does not assume that the vectors involved in the problem are actual subtypes
     of `AbstractVector`. Any Julia object that behaves as a vector is supported, so in
     particular higher-dimensional arrays or any custom user type that supports the
-    interface as defined in 
-    [`VectorInterface.jl`](https://github.com/Jutho/VectorInterface.jl)
-
-    Algorithms in KrylovKit.jl are tested against such a minimal implementation (named
-    `MinimalVec`) in the test suite. This type is only defined in the tests. However,
-    KrylovKit provides two types implementing this interface and slightly more, to make
-    them behave more like `AbstractArrays` (e.g. also `Base.:+` etc), which can facilitate
-    certain applications:
-    *   [`RecursiveVec`](@ref) can be used for grouping a set of vectors into a single
-        vector like structure (can be used recursively). This is more robust than trying to
-        use nested `Vector{<:Vector}` types.
-    *   [`InnerProductVec`](@ref) can be used to redefine the inner product (i.e. `inner`)
-        and corresponding norm (`norm`) of an already existing vector like object. The
-        latter should help with implementing certain type of preconditioners.
-
+    interface as defined in [`VectorInterface.jl`](https://github.com/Jutho/VectorInterface.jl).
+    Aside from arrays filled with scalar entries, this includes tuples, named tuples, and
+    arbitrarily nested combinations of tuples and arrays. Furthermore, `CuArray` objects
+    are fully supported as vectors, so that the application of the linear operator on the
+    vector can be executed on a GPU. The computations performed within the Krylov subspace,
+    such as diagonalising the projected matrix, are however always performed on the CPU.
+    
 3.  Since version 0.8, KrylovKit.jl supports reverse-mode AD by defining `ChainRulesCore.rrule` 
     definitions for the most common functionality (`linsolve`, `eigsolve`, `svdsolve`).
     Hence, reverse mode AD engines that are compatible with the [ChainRules](https://juliadiff.org/ChainRulesCore.jl/dev/)
